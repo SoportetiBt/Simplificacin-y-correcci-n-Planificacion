@@ -1,7 +1,7 @@
 // Diagnostico del puente DispatchTrack - Vercel Serverless Function
 // Ruta publica: https://TU-APP.vercel.app/api/dt-test
 // Prueba host + formas de autenticacion, y reporta que variables detecta. No crea ni modifica nada.
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
     const act = process.env.DT_ACTIVATION || '';
     const A = process.env.DT_API_KEY || '';
