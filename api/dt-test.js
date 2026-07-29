@@ -1,17 +1,23 @@
 // Diagnóstico del puente DispatchTrack — Vercel Serverless Function
 // Ruta pública: https://TU-APP.vercel.app/api/dt-test
-// Prueba varios hosts y varias formas de autenticación y reporta cuál responde 200. No crea ni modifica nada.
+// Prueba hosts + formas de autenticación, y reporta qué variables detecta. No crea ni modifica nada.
 export default async function handler(req, res) {
-  const act = process.env.DT_ACTIVATION;                 // ej: cluster-3
-  const A = process.env.DT_API_KEY || '';                // "nombre" de la key (ej: Simplificador Planificación)
-  const B = process.env.DT_API_SECRET || '';             // "secreto" de la key (ej: sk_live_...)
+  const act = process.env.DT_ACTIVATION;
+  const A = process.env.DT_API_KEY || '';       // "nombre" de la key
+  const B = process.env.DT_API_SECRET || '';    // "secreto" de la key
+
+  // Reporte de variables detectadas por el servidor (solo longitudes, sin exponer valores)
+  const variables_detectadas = {
+    DT_ACTIVATION: { presente: !!act, largo: (act || '').length },
+    DT_API_KEY:    { presente: !!A,   largo: A.length },
+    DT_API_SECRET: { presente: !!B,   largo: B.length }
+  };
 
   if (!act || (!A && !B)) {
-    return res.status(500).json({ ok:false, error:'Faltan variables', tengo:{ DT_ACTIVATION:!!act, DT_API_KEY:!!A, DT_API_SECRET:!!B } });
+    return res.status(500).json({ ok:false, error:'Faltan variables', variables_detectadas });
   }
   const b64 = s => Buffer.from(s).toString('base64');
 
-  // combinaciones de autenticación a probar
   const metodos = [];
   if (A && B) {
     metodos.push(['Basic nombre:secreto', 'Basic ' + b64(A + ':' + B)]);
@@ -19,13 +25,9 @@ export default async function handler(req, res) {
   }
   if (B) { metodos.push(['Basic secreto', 'Basic ' + b64(B)]); metodos.push(['Bearer secreto', 'Bearer ' + B]); metodos.push(['secreto crudo', B]); }
   if (A) { metodos.push(['Basic nombre', 'Basic ' + b64(A)]); }
-  // por si DT_API_KEY ya trae "nombre:secreto" junto
   if (A.includes(':')) metodos.push(['Basic (DT_API_KEY completo)', 'Basic ' + b64(A)]);
 
-  const hosts = [
-    'https://planner-' + act + '.dispatchtrack.com',
-    'https://api.planner-' + act + '.dispatchtrack.com'
-  ];
+  const hosts = [ 'https://planner-' + act + '.dispatchtrack.com' ];
 
   const resultados = [];
   for (const h of hosts) {
@@ -40,8 +42,6 @@ export default async function handler(req, res) {
       }
     }
   }
-  // ordenar: primero los 200
   resultados.sort((a,b) => (a.status===200?-1:0) - (b.status===200?-1:0));
   const exito = resultados.find(r => r.status === 200) || null;
-  res.status(200).json({ ok:true, activation: act, exito, resultados });
-}
+  res.status(200).json({ ok:true, activation: act, variables_detectadas, exito, resultados });
