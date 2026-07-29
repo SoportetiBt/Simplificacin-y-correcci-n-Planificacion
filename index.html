@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simplificador de Planificación</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#F4F3F3;color:#1a1d2e;padding:16px;max-width:760px;margin:0 auto}
+  h1{font-size:19px;color:#002E5D;font-weight:800}h1 span{color:#FF6600}
+  .sub{font-size:12.5px;color:#545454;margin:4px 0 14px}
+  .card{background:#fff;border:1px solid #e2e6ea;border-radius:12px;padding:15px;margin-bottom:14px}
+  label{font-size:12px;font-weight:700;color:#002E5D;display:block;margin-bottom:7px}
+  select,input[type=file],input[type=text],input[type=date]{width:100%;border:1px solid #dee2e6;border-radius:8px;padding:9px 10px;font-size:13.5px}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;border:1px solid #cdd6df;background:#fff;color:#002E5D;font-weight:700;font-size:13px;padding:9px;border-radius:9px;cursor:pointer}
+  .seg button.on{background:#002E5D;color:#fff;border-color:#002E5D}
+  .btn{border:none;border-radius:9px;padding:11px 16px;font-size:14px;font-weight:700;cursor:pointer}
+  .b1{background:#002E5D;color:#fff}.b2{background:#FF6600;color:#fff}
+  .hint{font-size:11.5px;color:#545454;margin-top:9px}
+  .res{font-size:13px;color:#1a1d2e;margin-top:10px;line-height:1.6}
+  .res b{color:#002E5D}
+  .warn{background:#fdecea;border:1px solid #f1c9c4;color:#c0392b;border-radius:8px;padding:9px 11px;font-size:12px;margin-top:10px}
+  .flist-item{display:flex;justify-content:space-between;align-items:center;background:#f4f3f3;border:1px solid #e2e6ea;border-radius:7px;padding:6px 10px;margin-bottom:5px;font-size:12.5px}
+  .flist-item button{border:none;background:none;color:#c0392b;font-weight:800;cursor:pointer;font-size:15px;line-height:1}
+  .com-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+  .com-row span{flex:1;font-size:12.5px}
+  .com-row select{width:auto;flex:0 0 auto}
+  table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:10px;display:block;overflow-x:auto;white-space:nowrap}
+  th,td{border:1px solid #e6e4dd;padding:3px 6px;text-align:left}
+  th{background:#002E5D;color:#fff;font-weight:700;position:sticky;top:0}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#002E5D;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}.toast.err{background:#c0392b}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+  <h1>Simplificador de <span>Planificación</span></h1>
+  <div class="sub">Subí uno o varios Excel del cliente (Rosen o Canon) y descargá el formato <b>Planner Pro UM</b> listo para el planificador. Podés ir sumando archivos y toda la data se junta.</div>
+
+  <div class="card">
+    <label>1 · Cliente</label>
+    <div class="seg">
+      <button id="c-auto" class="on" onclick="setCli('auto')">Auto</button>
+      <button id="c-rosen" onclick="setCli('rosen')">Rosen</button>
+      <button id="c-canon" onclick="setCli('canon')">Canon</button>
+    </div>
+    <div class="hint">Rosen → Identificador de contacto correlativo (1, 2, 3…). Canon → usa la columna “ID cliente”. “Auto” lo deduce del nombre del archivo (o si trae columna Canontex).</div>
+
+    <label style="margin-top:12px">Formato de salida</label>
+    <div class="seg">
+      <button id="f-um" class="on" onclick="setFormato('um')">Planner Pro (última milla)</button>
+      <button id="f-tr" onclick="setFormato('troncal')">Troncal</button>
+    </div>
+    <div id="pat-wrap" style="display:none;margin-top:12px">
+      <label>Patente del troncal</label>
+      <input type="text" id="patente" placeholder="Ej: ABCD12" oninput="this.value=this.value.toUpperCase();if(FILES.length)render()" style="text-transform:uppercase">
+      <div class="hint">Se escribe en la columna “Vehículo” de todas las filas del Troncal. El Troncal siempre se asigna a <b>Bodega RM</b>. (Solo Canon: Rosen no trabaja con troncal.)</div>
+    </div>
+
+    <div id="sts-row" style="display:none;margin-top:12px">
+      <label>Servicio Técnico (STS)</label>
+      <div class="seg">
+        <button id="sts-on" class="on" onclick="setSTS(true)">Sumar STS</button>
+        <button id="sts-off" onclick="setSTS(false)">No sumar STS</button>
+      </div>
+      <div class="hint">Solo Rosen. Detecta las filas de Servicio Técnico. En “No sumar” esas filas se <b>excluyen</b> del archivo de descarga.</div>
+    </div>
+
+    <label style="margin-top:12px">Fecha de entrega / planificación</label>
+    <input type="date" id="fecha" onchange="if(FILES.length)render()">
+    <div class="hint">Por defecto: mañana (última milla suele planificarse para el día siguiente). Esta fecha también se usa en el nombre del archivo descargado.</div>
+  </div>
+
+  <div class="card" id="canon-card" style="display:none">
+    <label>Ajuste de volumen Canon (mini ticket)</label>
+    <div class="seg">
+      <button id="ca-on" class="on" onclick="setCanonAdj(true)">Aplicar ajuste</button>
+      <button id="ca-off" onclick="setCanonAdj(false)">Sin ajuste</button>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <div style="flex:1"><label>Factor mini ticket</label><input type="text" id="ca-factor" value="0.231" oninput="onCanonCfg()"></div>
+      <div style="flex:1"><label>Umbral big ticket (m³/u)</label><input type="text" id="ca-umbral" value="0.8" oninput="onCanonCfg()"></div>
+    </div>
+    <label style="margin-top:10px">Palabras de big ticket (mueble — no recibe factor)</label>
+    <input type="text" id="ca-kw" oninput="onCanonCfg()">
+    <div class="hint">Solo Canon en formato UM. El factor <b>multiplica</b> el volumen/unidad de los <b>mini ticket</b> (textiles: sábanas, plumones, toallas…). El <b>big ticket</b> (cama, colchón, velador, mueble…) queda intacto. Textiles como “cubre/protector/funda/set” nunca se toman como big aunque digan “colchón”. Todo se guarda en este navegador.</div>
+    <div id="ca-read" class="res"></div>
+  </div>
+
+  <div class="card">
+    <label>2 · Subí el Excel del cliente (podés agregar varios)</label>
+    <input type="file" id="file" accept=".xlsx,.xls" multiple onchange="procesar(event)">
+    <div id="filelist" style="margin-top:10px"></div>
+    <div style="margin-top:10px"><button class="btn" style="background:#c0392b;color:#fff" onclick="limpiar()">🗑 Limpiar todo</button></div>
+    <div id="res" class="res"></div>
+    <div id="warn"></div>
+  </div>
+
+  <div class="card" id="com-card" style="display:none">
+    <label>Comunas sin bodega — asignalas para que se recuerden</label>
+    <div id="com-list"></div>
+    <div class="hint">Lo que asignes queda guardado en este navegador y se aplica automáticamente a los próximos archivos. Así vamos completando la base de comunas.</div>
+  </div>
+
+  <div class="card" id="prev-card" style="display:none">
+    <label>Vista previa (primeras filas)</label>
+    <div id="prev"></div>
+    <div id="dlbtns" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+<script>
+const OUT=['N° DOCUMENTO','LATITUD','LONGITUD','DIRECCION','NOMBRE ITEM','CANTIDAD','CODIGO ITEM','FECHA MIN ENTREGA','FECHA MAX ENTREGA','MIN VENTANA HORARIA 1','MAX VENTANA HORARIA 1','MIN VENTANA HORARIA 2','MAX VENTANA HORARIA 2','COSTO ITEM','CAPACIDAD UNO','CAPACIDAD DOS','SERVICE TIME','IMPORTANCIA','IDENTIFICADOR CONTACTO','NOMBRE CONTACTO','TELEFONO','EMAIL CONTACTO','CT ORIGEN','Tipo de Ruta'];
+const OUT_TR=['NÚMERO GUÍA *','VEHÍCULO *','NOMBRE ITEM *','CANTIDAD','CODIGO ITEM','IDENTIFICADOR CONTACTO','NOMBRE CONTACTO','TELÉFONO','EMAIL CONTACTO','DIRECCIÓN *','LATITUD','LONGITUD','FECHA MIN ENTREGA','FECHA MAX ENTREGA','CT DESTINO','CD Retiro','Tipo de Ruta'];
+const VINA=new Set(['VINA DEL MAR','VINA','QUILPUE','VILLA ALEMANA','EL BELLOTO','BELLOTO','VALPARAISO','CURAUMA','CONCON','CON CON','RENACA','LIMACHE','OLMUE','QUILLOTA','LA CRUZ','LA CALERA','CALERA','NOGALES','HIJUELAS','EL MELON','MELON','LLAY LLAY','LLAYLLAY','CATEMU','PANQUEHUE','SAN FELIPE','PUTAENDO','SANTA MARIA','RINCONADA','CALLE LARGA','LOS ANDES','SAN ESTEBAN','LA LIGUA','CABILDO','PAPUDO','ZAPALLAR','PETORCA','QUINTERO','PUCHUNCAVI','HORCON','HORCONES','ORCON','ORCONES']);
+const COQ=new Set(['LA SERENA','COQUIMBO','LA HERRADURA','PAIGUANO','VICUNA','OVALLE','COMBARBALA','MONTE PATRIA','PUNITAQUI','RIO HURTADO','SOTAQUI','ANDACOLLO','GUANAQUEROS','LAS TACAS','PUERTO VELERO','TONGOY','TOTORALILLO','ILLAPEL','ILAPEL','YLLAPEL']);
+const $=id=>document.getElementById(id);
+let CLI='auto', OUTROWS=null, FILES=[], FORMATO='um', OUTBOD=[], STS_ON=true, CLI_EFF='rosen', FCH_NAME='';
+// Base aprendida de comunas → bodega (persiste en el navegador)
+let COMBOD=(function(){try{return JSON.parse(localStorage.getItem('pp_combod')||'{}');}catch(e){return {};}})();
+function saveCombod(){try{localStorage.setItem('pp_combod',JSON.stringify(COMBOD));}catch(e){}}
+
+// Ajuste de volumen Canon (mini ticket): factor sobre el volumen inflado por el sistema. Solo Canon UM.
+const BIGKW_DEF=['COLCHON','CAMA','VELADOR','SOMMIER','SOMIER','BASE CAMA','BOX','RESPALDO','MUEBLE','CLOSET','COMODA','SILLON','SOFA','POLTRONA','ESCRITORIO','ESTANTE','REPISA','CATRE','CUNA','LITERA'];
+const TEXTILEVETO=['CUBRE','PROTECTOR','PROT ','FUNDA','SET ']; // textiles que NO son big aunque digan "colchón/cama"
+let CANON_ADJ=true, CANON_FACTOR=0.231, CANON_UMBRAL=0.8, BIGKW=BIGKW_DEF.slice();
+(function(){try{const c=JSON.parse(localStorage.getItem('pp_canonadj')||'{}');if('adj'in c)CANON_ADJ=!!c.adj;if(c.factor)CANON_FACTOR=+c.factor;if(c.umbral!=null)CANON_UMBRAL=+c.umbral;if(Array.isArray(c.bigkw)&&c.bigkw.length)BIGKW=c.bigkw;}catch(e){}})();
+function saveCanonCfg(){try{localStorage.setItem('pp_canonadj',JSON.stringify({adj:CANON_ADJ,factor:CANON_FACTOR,umbral:CANON_UMBRAL,bigkw:BIGKW}));}catch(e){}}
+// Híbrido: big ticket = (nombre de mueble sin veto textil) O (volumen/unidad ≥ umbral). Todo lo demás = mini ticket → recibe factor.
+function esBigTicket(nom,perU){
+  const N=normC(nom);
+  const veto=TEXTILEVETO.some(v=>N.includes(v));
+  const byName=!veto&&BIGKW.some(k=>N.includes(k));
+  const byVol=(perU!=null&&perU>=CANON_UMBRAL);
+  return byName||byVol;
+}
+function setCanonAdj(on){CANON_ADJ=on;$('ca-on').classList.toggle('on',on);$('ca-off').classList.toggle('on',!on);saveCanonCfg();if(FILES.length)render();}
+function onCanonCfg(){
+  const f=parseFloat(String($('ca-factor').value||'').replace(',','.'));if(!isNaN(f))CANON_FACTOR=f;
+  const u=parseFloat(String($('ca-umbral').value||'').replace(',','.'));if(!isNaN(u))CANON_UMBRAL=u;
+  const kw=String($('ca-kw').value||'').split(',').map(s=>normC(s).trim()).filter(Boolean);BIGKW=kw.length?kw:BIGKW_DEF.slice();
+  saveCanonCfg();if(FILES.length)render();
+}
+
+function toast(m,e){const t=$('toast');t.textContent=m;t.className='toast show'+(e?' err':'');clearTimeout(t._t);t._t=setTimeout(()=>t.className='toast',2800);}
+function normC(s){return(s||'').toString().toUpperCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');}
+const pad=v=>String(v).padStart(2,'0');
+
+function setCli(c){CLI=c;['auto','rosen','canon'].forEach(x=>$('c-'+x).classList.toggle('on',x===c));applyClientUI(c==='auto'?(FILES.length?detectCli(FILES[0]):'auto'):c);if(FILES.length)render();}
+function setFormato(f){if(f==='troncal'&&effCli()==='rosen'){toast('Rosen no usa Troncal',1);return;}FORMATO=f;setFormatoBtns();applyClientUI(effCli());if(FILES.length)render();}
+function setFormatoBtns(){$('f-um').classList.toggle('on',FORMATO==='um');$('f-tr').classList.toggle('on',FORMATO==='troncal');if($('pat-wrap'))$('pat-wrap').style.display=FORMATO==='troncal'?'':'none';}
+function setSTS(on){STS_ON=on;$('sts-on').classList.toggle('on',on);$('sts-off').classList.toggle('on',!on);if(FILES.length)render();}
+function effCli(){return CLI==='auto'?(FILES.length?detectCli(FILES[0]):'auto'):CLI;}
+// Rosen: sin Troncal + con toggle STS. Canon: con Troncal, sin STS.
+function applyClientUI(eff){
+  const isR=eff==='rosen';
+  $('f-tr').style.display=isR?'none':'';
+  $('sts-row').style.display=isR?'':'none';
+  if(isR&&FORMATO==='troncal'){FORMATO='um';setFormatoBtns();}
+  $('canon-card').style.display=(eff==='canon'&&FORMATO==='um')?'':'none';
+}
+
+function bodega(reg,com){
+  const R=normC(reg);
+  if(R.includes('VALPARAISO'))return 'Bodega Viña';
+  if(R.includes('COQUIMBO'))return 'Bodega Coquimbo';
+  if(R.includes('METROPOLITANA')||R.includes('SANTIAGO'))return 'Bodega RM';
+  const C=normC(com);
+  if(VINA.has(C)||VINA.has(C.replace(/ /g,'')))return 'Bodega Viña';
+  if(COQ.has(C))return 'Bodega Coquimbo';
+  if(COMBOD[C])return COMBOD[C];   // base aprendida manualmente
+  return '';
+}
+function regCode(bod){return {'Bodega Viña':'V','Bodega RM':'RM','Bodega Coquimbo':'IV'}[bod]||'SinBodega';}
+
+function limpiar(){FILES=[];OUTROWS=null;$('file').value='';renderFileList();$('res').innerHTML='';$('warn').innerHTML='';$('dlbtns').innerHTML='';$('prev-card').style.display='none';$('com-card').style.display='none';toast('Limpiado — subí otro archivo');}
+function quitarArchivo(i){FILES.splice(i,1);renderFileList();if(FILES.length)render();else limpiar();}
+function renderFileList(){
+  $('filelist').innerHTML=FILES.length?FILES.map((f,i)=>`<div class="flist-item"><span>📄 ${f.name} · <b>${f.data.length-1}</b> filas</span><button title="Quitar" onclick="quitarArchivo(${i})">✕</button></div>`).join(''):'<div class="hint" style="margin-top:0">Sin archivos cargados.</div>';
+}
+
+// Elige la hoja correcta: prioriza nombres conocidos; si no, la hoja con más columnas.
+function pickSheet(wb){
+  for(const n of ['DispatchTrack','PdE','Rpt. HojasRutas','Formato por defecto lastmile','Formato original','pegar base']){
+    if(wb.Sheets[n]) return wb.Sheets[n];
+  }
+  let best=null,bestScore=-1;
+  for(const n of wb.SheetNames){
+    const ws=wb.Sheets[n]; if(!ws||!ws['!ref']) continue;
+    const r=XLSX.utils.decode_range(ws['!ref']);
+    const cols=r.e.c-r.s.c+1, rows=r.e.r-r.s.r+1;
+    if(rows<2) continue;
+    const score=cols*1000+rows;
+    if(score>bestScore){bestScore=score;best=ws;}
+  }
+  return best||wb.Sheets[wb.SheetNames[0]];
+}
+function detectCli(file){
+  const nk=s=>normC(s).replace(/[^0-9A-Z ]/g,'').replace(/\s+/g,' ').trim();
+  const H=file.data[0].map(nk);
+  const nm=(file.name||'').toLowerCase();
+  const dispatchTrack=H.includes('ID CLIENTE')&&H.some(h=>h.includes('CANTIDAD DESPACHADA'));
+  return (nm.includes('canon')||H.some(h=>h.includes('CANONTEX'))||dispatchTrack)?'canon':'rosen';
+}
+function procesar(e){
+  const fs=[...e.target.files];if(!fs.length)return;
+  let pending=fs.length;
+  fs.forEach(f=>{
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'binary'});
+        const ws=pickSheet(wb);
+        const d=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        if(d.length>=2)FILES.push({name:f.name,data:d});
+        else toast('Sin datos: '+f.name,1);
+      }catch(err){toast('Error '+f.name+': '+err.message,1);}
+      if(--pending===0){e.target.value='';renderFileList();applyClientUI(effCli());render();}
+    };
+    rd.readAsBinaryString(f);
+  });
+}
+function render(){
+  if(!FILES.length){$('prev-card').style.display='none';return;}
+  let cli=effCli();if(cli==='auto')cli='rosen';
+  CLI_EFF=cli;
+  applyClientUI(cli);
+  if(cli==='rosen'&&FORMATO==='troncal'){FORMATO='um';setFormatoBtns();}
+
+  let dd;const fv=($('fecha')&&$('fecha').value)||'';
+  if(fv){const p=fv.split('-');dd=new Date(+p[0],+p[1]-1,+p[2]);}else{dd=new Date();dd.setDate(dd.getDate()+1);}
+  const fecha=pad(dd.getDate())+'/'+pad(dd.getMonth()+1)+'/'+dd.getFullYear();
+  FCH_NAME=pad(dd.getDate())+'-'+pad(dd.getMonth()+1)+'-'+dd.getFullYear();
+
+  const num=v=>{if(v===''||v==null)return null;if(typeof v==='number')return v;const x=parseFloat(String(v).trim().replace(',','.'));return isNaN(x)?null:x;};
+  const r3=v=>{if(v===null||v===''||v===undefined)return '';return Math.round(v*1000)/1000;};
+  const afterSlash=v=>{const s=String(v==null?'':v);return s.includes('/')?s.split('/').pop().trim():s.trim();};
+  const g=(r,i)=>i>=0?(r[i]===undefined?'':r[i]):'';
+
+  const HEAD=FORMATO==='troncal'?OUT_TR:OUT;
+  const out=[HEAD.slice()];OUTBOD=[];let n=0;
+  const unknownMap={},faltSet=new Set();let stsTot=0,stsSkip=0,miniN=0,bigN=0,volBefore=0,volAfter=0;
+
+  FILES.forEach(file=>{
+    const d=file.data;
+    const nk=s=>normC(s).replace(/[^0-9A-Z ]/g,'').replace(/\s+/g,' ').trim();
+    const H=d[0].map(nk);
+    const find=(...names)=>{for(const nm of names){const i=H.indexOf(nk(nm));if(i>=0)return i;}for(const nm of names){const i=H.findIndex(h=>h.includes(nk(nm)));if(i>=0)return i;}return -1;};
+    const iOrden=find('n° documento','numero documento','documento','orden','nro.f12','numero guia','guia','pedido','ot'),iLat=find('latitud','lat'),iLon=find('longitud','lng','lon'),iDir=find('direccion cliente','direccion'),iNom=find('descripcion mat','descripcion material','nombre del producto','nombre item','nombre producto','producto','descripcion del producto','descripcion'),iCod=find('id material','codigo del producto','codigo item','codigo producto','sku','material','codigo'),iCant=find('cantidad despachada','cantidad ruta','cantidad'),iVol=find('volumen','m3'),iPeso=find('peso'),iNomC=find('nombre cliente','nombre contacto','nombre receptor','contacto','cliente'),iTel=find('telefono cliente','telefono contacto','telefono'),iMail=find('correo electronico cliente','email contacto','correo','email'),iReg=find('region'),iCom=find('comuna'),iIdCli=find('id cliente','identificador cliente','id del cliente');
+    // columnas para detectar STS (servicio técnico)
+    const iTipo=find('tipo de ruta','tipo'),iDescG=find('descripcion','descripción'),iSrv=find('servicio'),iCentro=find('centro');
+
+    // faltantes (unión entre archivos)
+    const map={'Documento':iOrden,'Dirección':iDir,'Nombre ítem':iNom,'Cantidad':iCant,'Código ítem':iCod,'Volumen':iVol,'Peso':iPeso,'Nombre cliente':iNomC};
+    if(cli==='canon')map['ID cliente']=iIdCli; else map['Región']=iReg;
+    Object.keys(map).forEach(k=>{if(map[k]<0)faltSet.add(k);});
+
+    d.slice(1).forEach(r=>{
+      if(iOrden>=0&&!String(r[iOrden]||'').trim())return;
+      // STS solo aplica a Rosen
+      if(cli==='rosen'){
+        const stsTxt=[iTipo,iDescG,iNom,iSrv,iCentro].filter(x=>x>=0).map(x=>normC(r[x])).join(' ');
+        const isSTS=/\bSTS\b|\bSSTT\b|SERVICIO TECNIC|SERV TECNIC/.test(stsTxt);
+        if(isSTS){stsTot++;if(!STS_ON){stsSkip++;return;}}
+      }
+      n++;
+      const o=String(g(r,iOrden)).toUpperCase().trim();
+      const retiro=o.startsWith('006')||/_REC$/.test(o);
+      const cantRaw=cli==='canon'?afterSlash(g(r,iCant)):g(r,iCant);
+      const cantN=num(cantRaw);const cant=cantN||1;
+      const cantOut=(cantN===null?cantRaw:cantN);
+      let volOut;
+      if(cli==='rosen'){
+        if(retiro)volOut=0;
+        else{const vb=num(g(r,iVol))||0;const sofa=normC(g(r,iNom)).includes('SOFA')?cant:0;volOut=r3((vb+sofa)/cant);}
+      }else{   // Canon: volumen POR UNIDAD (la plataforma re-multiplica por la cantidad)
+        const vb=num(g(r,iVol));
+        if(vb===null){volOut='';}
+        else{
+          let vperu=vb/cant;
+          if(FORMATO!=='troncal'){   // el ajuste de mini ticket solo aplica en UM (el Troncal no lleva volumen)
+            const big=esBigTicket(g(r,iNom),vperu);
+            volBefore+=vperu;
+            if(CANON_ADJ&&!big){vperu=vperu*CANON_FACTOR;miniN++;}else{bigN++;}
+            volAfter+=vperu;
+          }
+          volOut=r3(vperu);
+        }
+      }
+      const pesoOut=r3(num(g(r,iPeso)));
+      const dirRaw=String(g(r,iDir)).trim(),comStr=String(g(r,iCom)).trim();
+      const dir=(comStr&&!normC(dirRaw).includes(normC(comStr)))?[dirRaw,comStr].filter(Boolean).join(', '):dirRaw;
+      const lat=cli==='canon'?'':(num(g(r,iLat))??'');
+      const lon=cli==='canon'?'':(num(g(r,iLon))??'');
+      const ident=cli==='canon'?g(r,iIdCli):n;
+      const doc=g(r,iOrden)===''?'':String(g(r,iOrden));
+      const cod=g(r,iCod)===''?'':String(g(r,iCod));
+      const nom=g(r,iNom),nomc=g(r,iNomC),tel=g(r,iTel),mail=g(r,iMail);
+      const bod=FORMATO==='troncal'?'Bodega RM':bodega(g(r,iReg),g(r,iCom));
+      const patente=($('patente')&&$('patente').value||'').toUpperCase().trim();
+      if(FORMATO==='troncal') out.push([doc,patente,nom,cantOut,cod,ident,nomc,tel,mail,dir,lat,lon,fecha,fecha,'Bodega RM','','TRONCAL']);
+      else out.push([doc,lat,lon,dir,nom,cantOut,cod,fecha,fecha,'','','','','',volOut,pesoOut,'','',ident,nomc,tel,mail,bod,'UM']);
+      OUTBOD.push(bod);
+      if(FORMATO!=='troncal'&&!bod&&comStr)unknownMap[normC(comStr)]=comStr;
+    });
+  });
+
+  OUTROWS=out;
+  const falt=[...faltSet];
+  const bodC={};OUTBOD.forEach(b=>{const k=b||'Sin bodega';bodC[k]=(bodC[k]||0)+1;});
+  const bodTxt=Object.keys(bodC).map(b=>`${b}: <b>${bodC[b]}</b>`).join(' · ')||'—';
+  const uniqN=new Set(out.slice(1).map(x=>String(x[0]).trim()).filter(Boolean)).size;
+  const stsTxt=cli==='rosen'&&stsTot?` · STS: <b>${stsTot}</b> (${STS_ON?'incluidas':'excluidas'})`:'';
+  $('res').innerHTML=`Archivos: <b>${FILES.length}</b> · Cliente: <b>${cli==='canon'?'Canon':'Rosen'}</b> · Formato: <b>${FORMATO==='troncal'?'Troncal':'Planner Pro UM'}</b> · Líneas: <b>${out.length-1}</b> · Órdenes únicas: <b>${uniqN}</b> · Fecha: <b>${fecha}</b>${stsTxt}<br>Por bodega → ${bodTxt}`;
+  $('dlbtns').innerHTML=Object.keys(bodC).map(b=>`<button class="btn b2" onclick="descargarBodega('${b.replace(/'/g,'')}')">⬇ ${b} (${bodC[b]})</button>`).join('')+(Object.keys(bodC).length>1?`<button class="btn b1" onclick="descargarBodega('__ALL__')">⬇ Todo junto</button>`:'');
+  $('warn').innerHTML=falt.length?`<div class="warn">⚠ No encontré: <b>${falt.join(', ')}</b>. Van vacías. Si tienen otro nombre, decime.</div>`:'';
+
+  // Comunas sin bodega → asignación manual
+  renderComunas(Object.values(unknownMap));
+
+  // Lectura del ajuste Canon (solo UM)
+  if($('ca-read'))$('ca-read').innerHTML=(cli==='canon'&&FORMATO==='um')?`Mini ticket: <b>${miniN}</b> ${CANON_ADJ?'(×'+CANON_FACTOR+')':'(ajuste OFF)'} · Big ticket: <b>${bigN}</b> (intactos) · Vol/u total: <b>${r3(volBefore)}</b> → <b>${r3(volAfter)}</b> m³`:'';
+
+  const cols=out[0].map((_,i)=>i).slice(0,8);const th=cols.map(c=>`<th>${out[0][c]}</th>`).join('');
+  const tb=out.slice(1,7).map(r=>'<tr>'+cols.map(c=>`<td>${String(r[c]??'').slice(0,22)}</td>`).join('')+'</tr>').join('');
+  $('prev').innerHTML=`<table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table>`;
+  $('prev-card').style.display='block';
+  toast('Listo: '+(out.length-1)+' líneas');
+}
+function renderComunas(unknown){
+  if(!unknown.length){$('com-card').style.display='none';return;}
+  $('com-card').style.display='block';
+  $('com-list').innerHTML=unknown.map(c=>{
+    const ce=c.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    return `<div class="com-row"><span>${c}</span><select onchange="asignarComuna('${ce}',this.value)"><option value="">— elegir bodega —</option><option>Bodega Viña</option><option>Bodega Coquimbo</option><option>Bodega RM</option></select></div>`;
+  }).join('');
+}
+function asignarComuna(c,b){if(!b)return;COMBOD[normC(c)]=b;saveCombod();toast(c+' → '+b);render();}
+
+function descargarBodega(b){
+  if(!OUTROWS||OUTROWS.length<2){toast('Primero subí un archivo',1);return;}
+  const rows=[];for(let i=1;i<OUTROWS.length;i++){if(b==='__ALL__'||(OUTBOD[i-1]||'Sin bodega')===b)rows.push(OUTROWS[i]);}
+  if(!rows.length){toast('Sin filas para '+b,1);return;}
+  const aoa=[OUTROWS[0]].concat(rows.map(r=>r.map(v=>v===''?null:v)));
+  const ws=XLSX.utils.aoa_to_sheet(aoa),wb=XLSX.utils.book_new();
+  const fcols=FORMATO==='troncal'?[12,13]:[7,8];
+  for(let R=1;R<aoa.length;R++){fcols.forEach(C=>{const ref=XLSX.utils.encode_cell({r:R,c:C});const cell=ws[ref];if(cell&&cell.v!=null&&cell.v!==''){cell.t='s';cell.v=String(cell.v);delete cell.z;}});}
+  XLSX.utils.book_append_sheet(wb,ws,FORMATO==='troncal'?'Formato original':'Planner Pro UM');
+  const cliName=CLI_EFF==='canon'?'Canon':'Rosen';
+  const reg=b==='__ALL__'?'Todo':regCode(b);
+  XLSX.writeFile(wb,'Planificacion_'+cliName+'_'+reg+'_'+FCH_NAME+'.xlsx');
+  toast('Descargado: '+(b==='__ALL__'?'todo junto':b));
+}
+(function(){
+  const t=new Date();t.setDate(t.getDate()+1);const f=$('fecha');if(f)f.value=t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate());
+  if($('ca-factor'))$('ca-factor').value=CANON_FACTOR;
+  if($('ca-umbral'))$('ca-umbral').value=CANON_UMBRAL;
+  if($('ca-kw'))$('ca-kw').value=BIGKW.join(', ');
+  if($('ca-on')){$('ca-on').classList.toggle('on',CANON_ADJ);$('ca-off').classList.toggle('on',!CANON_ADJ);}
+  renderFileList();
+})();
+</script>
+</body>
+</html>
