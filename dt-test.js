@@ -57,7 +57,7 @@ export default async function handler(req, res) {
       if (resultados[i].status === 200) { exito = resultados[i]; break; }
     }
 
-    return res.status(200).json({ ok: true, host: host, variables_detectadas, exito, resultados });
+    return res.status(200).json({ ok: true, host: host, variables_detectadas, exito, resultados });}
   } catch (err) {
     return res.status(200).json({ ok: false, error_interno: String((err && err.stack) || err) });
   }
