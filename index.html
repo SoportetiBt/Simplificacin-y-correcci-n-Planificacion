@@ -122,6 +122,17 @@
     <div id="dlbtns" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
   </div>
 
+  <div class="card" id="dt-card">
+    <label>🗺️ Coordenadas desde DispatchTrack (rellenar las que faltan)</label>
+    <div class="hint" style="margin-top:0">Lee tu planificación ya subida a DispatchTrack y rellena la coordenada de las direcciones que quedaron <b>sin ubicar</b>. No crea ni sube nada nuevo: solo completa los huecos vacíos de esa misma planificación.</div>
+    <label style="margin-top:12px">Clave de acceso</label>
+    <input type="password" id="dt-token" placeholder="pega tu clave (se guarda en este navegador)" style="width:100%;border:1px solid #dee2e6;border-radius:8px;padding:9px 10px;font-size:13.5px">
+    <div style="margin-top:10px"><button class="btn b1" id="dt-load" onclick="dtcCargar()">Cargar mis planificaciones</button></div>
+    <div id="dt-groups" style="margin-top:10px"></div>
+    <div id="dt-review" style="margin-top:10px"></div>
+    <div id="dt-result" style="margin-top:10px"></div>
+  </div>
+
   <div class="toast" id="toast"></div>
 <script>
 const OUT=['N° DOCUMENTO','LATITUD','LONGITUD','DIRECCION','NOMBRE ITEM','CANTIDAD','CODIGO ITEM','FECHA MIN ENTREGA','FECHA MAX ENTREGA','MIN VENTANA HORARIA 1','MAX VENTANA HORARIA 1','MIN VENTANA HORARIA 2','MAX VENTANA HORARIA 2','COSTO ITEM','CAPACIDAD UNO','CAPACIDAD DOS','SERVICE TIME','IMPORTANCIA','IDENTIFICADOR CONTACTO','NOMBRE CONTACTO','TELEFONO','EMAIL CONTACTO','CT ORIGEN','Tipo de Ruta'];
@@ -443,6 +454,65 @@ function descargarBodega(b){
   if($('ca-kw'))$('ca-kw').value=BIGKW.join(', ');
   if($('ca-on')){$('ca-on').classList.toggle('on',CANON_ADJ);$('ca-off').classList.toggle('on',!CANON_ADJ);}
   renderFileList();
+})();
+</script>
+<script>
+/* ===== Coordenadas desde DispatchTrack (solo lee y rellena huecos vacíos; protegido con clave) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const API='/api/dt-test';
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  try{const t=localStorage.getItem('pp_dttoken');if(t&&$('dt-token'))$('dt-token').value=t;}catch(e){}
+  function tok(){const v=(($('dt-token')&&$('dt-token').value)||'').trim();try{localStorage.setItem('pp_dttoken',v);}catch(e){}return encodeURIComponent(v);}
+  async function jget(u){const r=await fetch(u);const t=await r.text();let j;try{j=JSON.parse(t);}catch(e){throw new Error(t.slice(0,120));}if(j&&j.error)throw new Error(j.error);return j;}
+
+  window.dtcCargar=async function(){
+    $('dt-groups').innerHTML='<div class="hint">Cargando…</div>';$('dt-review').innerHTML='';$('dt-result').innerHTML='';
+    try{
+      const j=await jget(API+'?token='+tok());
+      const gs=j.grupos||[];
+      if(!gs.length){$('dt-groups').innerHTML='<div class="hint">Sin planificaciones. ¿Subiste el archivo a DispatchTrack?</div>';return;}
+      $('dt-groups').innerHTML='<label style="margin-top:4px">Elige tu planificación:</label>'+gs.map(g=>`<div onclick="dtcElegir(${g.id},this)" style="cursor:pointer;border:1px solid #dee2e6;border-radius:8px;padding:9px 11px;margin-bottom:6px;font-size:12.5px" onmouseover="this.style.borderColor='#FF6600'" onmouseout="this.style.borderColor='#dee2e6'"><b>${esc(g.name||('Grupo '+g.id))}</b>${g.stops_count!=null?' · '+g.stops_count+' paradas':''}</div>`).join('');
+    }catch(e){$('dt-groups').innerHTML='<div class="warn">Error: '+esc(e.message)+(String(e.message).indexOf('autorizado')>=0?' — revisá la clave':'')+'</div>';}
+  };
+
+  window.dtcElegir=async function(id,el){
+    $('dt-result').innerHTML='';
+    $('dt-review').innerHTML='<div class="hint">Revisando en DispatchTrack… (puede tardar unos segundos)</div>';
+    try{
+      const j=await jget(API+'?token='+tok()+'&fix='+id);
+      const total=j.total_paradas||0,sin=j.sin_coordenada||0;
+      let h=`<div class="res">Paradas: <b>${total}</b> · Sin ubicar: <b>${sin}</b></div>`;
+      if(sin===0){h+='<div class="res">✅ Todo ubicado, no hay nada que rellenar.</div>';}
+      else{
+        const acc=j.acciones||[];
+        h+='<table><thead><tr><th>N° orden</th><th>Dirección</th><th>Propuesta</th><th>Conf.</th></tr></thead><tbody>'+
+          acc.map(a=>{const p=a.propuesta||{};const coord=p.lat!=null?(p.lat+', '+p.lon):'— no encontrada —';return `<tr><td>${esc(a.ident)}</td><td>${esc(a.dir)}</td><td>${esc(coord)}</td><td>${esc(p.conf||'')}</td></tr>`;}).join('')+'</tbody></table>';
+        if(sin>acc.length)h+='<div class="hint">Se muestran '+acc.length+'; al rellenar se procesan todas por tandas.</div>';
+        h+='<div style="margin-top:10px"><button class="btn b2" id="dt-fix" onclick="dtcArreglar('+id+')">📍 Rellenar los huecos en DispatchTrack</button></div>';
+      }
+      $('dt-review').innerHTML=h;
+    }catch(e){$('dt-review').innerHTML='<div class="warn">Error: '+esc(e.message)+'</div>';}
+  };
+
+  window.dtcArreglar=async function(id){
+    const b=$('dt-fix');if(b)b.disabled=true;
+    $('dt-result').innerHTML='<div class="hint">Escribiendo coordenadas…</div>';
+    let escritas=0,noEnc=[],v=0;
+    try{
+      while(v<25){v++;
+        const j=await jget(API+'?token='+tok()+'&fix='+id+'&go=1');
+        (j.acciones||[]).forEach(a=>{const p=a.propuesta||{};if(a.escrito&&(a.escrito.status===200||a.escrito.status===201))escritas++;else if(!p||p.lat==null)noEnc.push(a);});
+        $('dt-result').innerHTML='<div class="hint">Escritas '+escritas+'… (quedan '+(j.quedan_pendientes||0)+')</div>';
+        if((j.quedan_pendientes||0)===0)break;
+      }
+      let h='<div class="res">✅ Listo. Rellené <b>'+escritas+'</b> coordenada(s) en DispatchTrack.</div>';
+      if(noEnc.length){h+='<div class="warn">⚠ '+noEnc.length+' no se pudieron ubicar (revisalas a mano):<br>'+noEnc.map(a=>esc(a.ident)+' — '+esc(a.dir)).join('<br>')+'</div>';}
+      h+='<div class="hint">Ya podés planificar; las que rellenamos aparecerán ubicadas.</div>';
+      $('dt-result').innerHTML=h;
+    }catch(e){$('dt-result').innerHTML='<div class="warn">Error: '+esc(e.message)+'</div>';}
+    if(b)b.disabled=false;
+  };
 })();
 </script>
 </body>
