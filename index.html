@@ -124,7 +124,7 @@
 
   <div class="card" id="dt-card">
     <label>🗺️ Coordenadas desde DispatchTrack (rellenar las que faltan)</label>
-    <div class="hint" style="margin-top:0">Lee tu planificación ya subida a DispatchTrack y rellena la coordenada de las direcciones que quedaron <b>sin ubicar</b>. No crea ni sube nada nuevo: solo completa los huecos vacíos de esa misma planificación.</div>
+    <div class="hint" style="margin-top:0">Lee tu planificación ya subida a DispatchTrack, lista las direcciones que quedaron <b>sin ubicar</b>, tú se las pasas a la IA (Claude) para que te dé las coordenadas, y con un botón se escriben en esa misma planificación. No crea ni sube nada nuevo: solo completa los huecos vacíos.</div>
     <label style="margin-top:12px">Clave de acceso</label>
     <input type="password" id="dt-token" placeholder="pega tu clave (se guarda en este navegador)" style="width:100%;border:1px solid #dee2e6;border-radius:8px;padding:9px 10px;font-size:13.5px">
     <div style="margin-top:10px"><button class="btn b1" id="dt-load" onclick="dtcCargar()">Cargar mis planificaciones</button></div>
@@ -457,11 +457,12 @@ function descargarBodega(b){
 })();
 </script>
 <script>
-/* ===== Coordenadas desde DispatchTrack (solo lee y rellena huecos vacíos; protegido con clave) ===== */
+/* ===== Coordenadas desde DispatchTrack (lee las sin ubicar; la IA da las coords; escribe; protegido con clave) ===== */
 (function(){
   const $=id=>document.getElementById(id);
   const API='/api/dt-test';
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let FALT=[], CURID=null;
   try{const t=localStorage.getItem('pp_dttoken');if(t&&$('dt-token'))$('dt-token').value=t;}catch(e){}
   function tok(){const v=(($('dt-token')&&$('dt-token').value)||'').trim();try{localStorage.setItem('pp_dttoken',v);}catch(e){}return encodeURIComponent(v);}
   async function jget(u){const r=await fetch(u);const t=await r.text();let j;try{j=JSON.parse(t);}catch(e){throw new Error(t.slice(0,120));}if(j&&j.error)throw new Error(j.error);return j;}
@@ -477,41 +478,58 @@ function descargarBodega(b){
   };
 
   window.dtcElegir=async function(id,el){
-    $('dt-result').innerHTML='';
-    $('dt-review').innerHTML='<div class="hint">Revisando en DispatchTrack… (puede tardar unos segundos)</div>';
+    CURID=id;$('dt-result').innerHTML='';
+    $('dt-review').innerHTML='<div class="hint">Leyendo la planificación en DispatchTrack…</div>';
     try{
       const j=await jget(API+'?token='+tok()+'&fix='+id);
-      const total=j.total_paradas||0,sin=j.sin_coordenada||0;
+      FALT=j.faltantes||[];
+      const total=j.total||0,sin=j.sin_coordenada||0;
       let h=`<div class="res">Paradas: <b>${total}</b> · Sin ubicar: <b>${sin}</b></div>`;
-      if(sin===0){h+='<div class="res">✅ Todo ubicado, no hay nada que rellenar.</div>';}
+      if(sin===0){h+='<div class="res">✅ Todo ubicado, no hay nada que buscar.</div>';}
       else{
-        const acc=j.acciones||[];
-        h+='<table><thead><tr><th>N° orden</th><th>Dirección</th><th>Propuesta</th><th>Conf.</th></tr></thead><tbody>'+
-          acc.map(a=>{const p=a.propuesta||{};const coord=p.lat!=null?(p.lat+', '+p.lon):'— no encontrada —';return `<tr><td>${esc(a.ident)}</td><td>${esc(a.dir)}</td><td>${esc(coord)}</td><td>${esc(p.conf||'')}</td></tr>`;}).join('')+'</tbody></table>';
-        if(sin>acc.length)h+='<div class="hint">Se muestran '+acc.length+'; al rellenar se procesan todas por tandas.</div>';
-        h+='<div style="margin-top:10px"><button class="btn b2" id="dt-fix" onclick="dtcArreglar('+id+')">📍 Rellenar los huecos en DispatchTrack</button></div>';
+        h+='<table><thead><tr><th>N° orden</th><th>Dirección</th></tr></thead><tbody>'+FALT.map(f=>`<tr><td>${esc(f.ident)}</td><td>${esc(f.dir)}</td></tr>`).join('')+'</tbody></table>';
+        h+='<div style="margin-top:12px"><button class="btn b1" onclick="dtcCopiar()">📋 Copiar direcciones para la IA</button></div>';
+        h+='<div class="hint">1) Copia · 2) pégalo en una conversación con la IA (Claude) · 3) pega abajo las coordenadas que te devuelva · 4) Escribir.</div>';
+        h+='<label style="margin-top:12px">Pega aquí las coordenadas que te dio la IA</label>';
+        h+='<textarea id="dt-coords" style="width:100%;height:110px;border:1px solid #dee2e6;border-radius:8px;padding:9px;font-size:12.5px;font-family:monospace" placeholder="3917836441, -33.6425, -70.8184"></textarea>';
+        h+='<div style="margin-top:10px"><button class="btn b2" onclick="dtcEscribir()">📍 Escribir estas coordenadas en DispatchTrack</button></div>';
       }
       $('dt-review').innerHTML=h;
     }catch(e){$('dt-review').innerHTML='<div class="warn">Error: '+esc(e.message)+'</div>';}
   };
 
-  window.dtcArreglar=async function(id){
-    const b=$('dt-fix');if(b)b.disabled=true;
-    $('dt-result').innerHTML='<div class="hint">Escribiendo coordenadas…</div>';
-    let escritas=0,noEnc=[],v=0;
+  window.dtcCopiar=function(){
+    const prompt='Necesito la LATITUD y LONGITUD (en Chile) de estas direcciones. Devuélvemelas SOLO en este formato, una por línea, sin texto extra:\nN°orden, latitud, longitud\n\nDirecciones:\n'+FALT.map(f=>f.ident+' | '+f.dir).join('\n');
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(prompt).then(()=>{$('dt-result').innerHTML='<div class="res">✅ Copiado. Pégalo en tu conversación con la IA.</div>';},()=>fallback());
+    }else fallback();
+    function fallback(){$('dt-result').innerHTML='<label>Copia este texto (clic para seleccionar):</label><textarea style="width:100%;height:150px;font-family:monospace;font-size:12px" onclick="this.select()">'+esc(prompt)+'</textarea>';}
+  };
+
+  window.dtcEscribir=async function(){
+    const txt=($('dt-coords')&&$('dt-coords').value)||'';
+    const parsed=[];
+    txt.split(/\n/).forEach(line=>{
+      const nums=line.match(/-?\d+\.\d+/g);
+      const first=(line.trim().split(/[\s,|]+/)[0]||'').trim();
+      if(nums&&nums.length>=2&&first)parsed.push({ident:first,lat:+nums[nums.length-2],lon:+nums[nums.length-1]});
+    });
+    if(!parsed.length){$('dt-result').innerHTML='<div class="warn">No pude leer coordenadas. Formato: N°orden, lat, lon (una por línea).</div>';return;}
+    const map={};FALT.forEach(f=>map[String(f.ident)]=f.stop_id);
+    const items=[],sinMatch=[];
+    parsed.forEach(p=>{const sid=map[String(p.ident)];if(sid!=null)items.push({stop_id:sid,ident:p.ident,lat:p.lat,lon:p.lon});else sinMatch.push(p.ident);});
+    if(!items.length){$('dt-result').innerHTML='<div class="warn">Los N° de orden no coinciden con las paradas sin ubicar. Revisa que pegaste las de esta planificación.</div>';return;}
+    $('dt-result').innerHTML='<div class="hint">Escribiendo '+items.length+' coordenada(s) en DispatchTrack…</div>';
     try{
-      while(v<25){v++;
-        const j=await jget(API+'?token='+tok()+'&fix='+id+'&go=1');
-        (j.acciones||[]).forEach(a=>{const p=a.propuesta||{};if(a.escrito&&(a.escrito.status===200||a.escrito.status===201))escritas++;else if(!p||p.lat==null)noEnc.push(a);});
-        $('dt-result').innerHTML='<div class="hint">Escritas '+escritas+'… (quedan '+(j.quedan_pendientes||0)+')</div>';
-        if((j.quedan_pendientes||0)===0)break;
-      }
-      let h='<div class="res">✅ Listo. Rellené <b>'+escritas+'</b> coordenada(s) en DispatchTrack.</div>';
-      if(noEnc.length){h+='<div class="warn">⚠ '+noEnc.length+' no se pudieron ubicar (revisalas a mano):<br>'+noEnc.map(a=>esc(a.ident)+' — '+esc(a.dir)).join('<br>')+'</div>';}
-      h+='<div class="hint">Ya podés planificar; las que rellenamos aparecerán ubicadas.</div>';
+      const r=await fetch(API+'?token='+tok()+'&put='+CURID,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+      const j=await r.json();if(j.error)throw new Error(j.error);
+      let h='<div class="res">✅ Escritas <b>'+(j.escritas||0)+'</b> de '+items.length+' en DispatchTrack.</div>';
+      const fallidas=(j.resultados||[]).filter(x=>!x.ok);
+      if(fallidas.length)h+='<div class="warn">No se escribieron '+fallidas.length+':<br>'+fallidas.map(x=>esc(x.ident)+' — status '+esc(String(x.status||''))+' '+esc(x.resp||x.motivo||'')).join('<br>')+'</div>';
+      if(sinMatch.length)h+='<div class="hint">Ignoré '+sinMatch.length+' N° que no estaban en la lista: '+esc(sinMatch.join(', '))+'</div>';
+      h+='<div class="hint">Recarga la planificación en DispatchTrack para ver las coordenadas.</div>';
       $('dt-result').innerHTML=h;
     }catch(e){$('dt-result').innerHTML='<div class="warn">Error: '+esc(e.message)+'</div>';}
-    if(b)b.disabled=false;
   };
 })();
 </script>
