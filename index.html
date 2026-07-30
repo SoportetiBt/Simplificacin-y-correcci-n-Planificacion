@@ -103,6 +103,19 @@
     <div class="hint">Lo que asignes queda guardado en este navegador y se aplica automáticamente a los próximos archivos. Así vamos completando la base de comunas.</div>
   </div>
 
+  <div class="card" id="geo-card" style="display:none">
+    <label>📍 Georreferenciador — rellenar lat/lon que falten</label>
+    <div id="geo-info" class="res"></div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn b2" id="geo-btn" onclick="geocodizar()">📍 Georreferenciar</button>
+      <button class="btn" style="background:#c0392b;color:#fff" onclick="geoCancel=true">Detener</button>
+      <button class="btn b1" onclick="if(confirm('¿Vaciar el caché de direcciones ya resueltas?')){GEOCACHE={};saveGeocache();render();}">Vaciar caché</button>
+    </div>
+    <div id="geo-prog" class="hint"></div>
+    <div id="geo-fails" style="margin-top:8px"></div>
+    <div class="hint">Busca en OpenStreetMap (gratis) desde tu navegador, ~1 dirección por segundo. Las ya resueltas quedan en caché para no repetir. La coordenada rellena la salida; confianza: <b>exacta</b> / <b>aproximada</b> / <b>centroide de comuna</b>.</div>
+  </div>
+
   <div class="card" id="prev-card" style="display:none">
     <label>Vista previa (primeras filas)</label>
     <div id="prev"></div>
@@ -143,6 +156,69 @@ function onCanonCfg(){
   saveCanonCfg();if(FILES.length)render();
 }
 
+// ---- Georreferenciador (OpenStreetMap / Nominatim, corre en el navegador) ----
+let GEOCACHE=(function(){try{return JSON.parse(localStorage.getItem('pp_geocache')||'{}');}catch(e){return {};}})();
+function saveGeocache(){try{localStorage.setItem('pp_geocache',JSON.stringify(GEOCACHE));}catch(e){}}
+let GEO_PEND=[],geoRun=false,geoCancel=false;
+const NOGEO=['PARADERO','PASAJE INTERIOR','LOTE ','SITIO ','PARCELA','KILOMETRO','KM ',' S/N','SIN NUMERO','FUNDO','SECTOR '];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function rankC(c){return {exacta:3,aproximada:2,centroide:1,nulo:0}[c]||0;}
+function clasifConf(h){
+  const t=(h.addresstype||h.type||'').toLowerCase();
+  if(['building','house','house_number','address','apartments'].includes(t))return 'exacta';
+  if(['road','residential','pedestrian','street','tertiary','secondary','primary','living_street'].includes(t))return 'aproximada';
+  if(['city','town','village','hamlet','suburb','neighbourhood','municipality','administrative','county','region','state','province','locality','city_district'].includes(t))return 'centroide';
+  const pr=+h.place_rank||0; if(pr>=30)return 'exacta'; if(pr>=26)return 'aproximada'; return 'centroide';
+}
+function calleComuna(dir){
+  const parts=String(dir).split(',').map(s=>s.trim()).filter(Boolean);
+  if(parts.length<2)return null;
+  const calle=parts[0].replace(/\b(casa|depto|dpto|dep|of|oficina|block|torre|piso|local)\b.*/i,'').trim();
+  const comuna=parts[parts.length-1];
+  if(!calle)return null;
+  return calle+', '+comuna+', Chile';
+}
+function motivoNoGeo(dir){const N=normC(dir);const hit=NOGEO.find(k=>N.includes(k));if(hit)return 'referencia difícil: '+hit.trim().toLowerCase();if(!/\d/.test(dir))return 'sin número';return 'no encontrada';}
+async function nominatim(q){
+  const url='https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=cl&q='+encodeURIComponent(q);
+  const resp=await fetch(url,{headers:{'Accept':'application/json'}});
+  if(!resp.ok)throw new Error('HTTP '+resp.status);
+  const j=await resp.json();
+  if(!j||!j.length)return null;
+  const h=j[0];
+  return {lat:Math.round(+h.lat*1e6)/1e6,lon:Math.round(+h.lon*1e6)/1e6,conf:clasifConf(h)};
+}
+async function geocodeOne(dir){
+  let r=null;
+  try{r=await nominatim(dir+', Chile');}catch(e){r=null;}
+  if(!r||r.conf==='centroide'){                 // 2º intento: calle + comuna (historia #5)
+    const q2=calleComuna(dir);
+    if(q2){await sleep(1100);try{const r2=await nominatim(q2);if(r2&&(!r||rankC(r2.conf)>rankC(r.conf)))r=r2;}catch(e){}}
+  }
+  return r||{lat:null,lon:null,conf:'nulo',motivo:motivoNoGeo(dir)};
+}
+async function geocodizar(){
+  if(geoRun||!GEO_PEND.length)return;
+  geoRun=true;geoCancel=false;if($('geo-btn'))$('geo-btn').disabled=true;
+  const lote=GEO_PEND.slice();let i=0;
+  for(const p of lote){
+    if(geoCancel)break;
+    if($('geo-prog'))$('geo-prog').textContent='Buscando '+(++i)+' de '+lote.length+'…  '+p.dir.slice(0,45);
+    try{GEOCACHE[p.norm]=await geocodeOne(p.dir);}catch(e){GEOCACHE[p.norm]={lat:null,lon:null,conf:'nulo',motivo:'error de red'};}
+    saveGeocache();
+    await sleep(1100);   // respeta el límite de ~1 consulta/seg de OpenStreetMap
+  }
+  geoRun=false;if($('geo-prog'))$('geo-prog').textContent=geoCancel?'Detenido.':'Listo ✓';
+  render();
+}
+function renderGeo(conCoord,pend,cc,fails){
+  const card=$('geo-card');if(!card)return;card.style.display='block';
+  const sin=pend.length,nuestras=(cc.exacta||0)+(cc.aproximada||0)+(cc.centroide||0);
+  if($('geo-info'))$('geo-info').innerHTML=`Con coordenada: <b>${conCoord}</b> · Sin coordenada: <b>${sin}</b>`+(nuestras?` · Nosotros resolvimos: <b>${cc.exacta||0}</b> exactas · <b>${cc.aproximada||0}</b> aprox. · <b>${cc.centroide||0}</b> centroide`:'');
+  if($('geo-btn')){$('geo-btn').textContent=geoRun?'Buscando…':('📍 Georreferenciar las que faltan ('+sin+')');$('geo-btn').disabled=geoRun||!sin;}
+  if($('geo-fails'))$('geo-fails').innerHTML=fails.length?('<div class="warn">No encontradas ('+fails.length+') — revisar a mano:<br>'+fails.slice(0,40).map(f=>`• ${f.dir} <i>(${f.motivo})</i>`).join('<br>')+(fails.length>40?'<br>… y '+(fails.length-40)+' más':'')+'</div>'):'';
+}
+
 function toast(m,e){const t=$('toast');t.textContent=m;t.className='toast show'+(e?' err':'');clearTimeout(t._t);t._t=setTimeout(()=>t.className='toast',2800);}
 function normC(s){return(s||'').toString().toUpperCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');}
 const pad=v=>String(v).padStart(2,'0');
@@ -174,7 +250,7 @@ function bodega(reg,com){
 }
 function regCode(bod){return {'Bodega Viña':'V','Bodega RM':'RM','Bodega Coquimbo':'IV'}[bod]||'SinBodega';}
 
-function limpiar(){FILES=[];OUTROWS=null;$('file').value='';renderFileList();$('res').innerHTML='';$('warn').innerHTML='';$('dlbtns').innerHTML='';$('prev-card').style.display='none';$('com-card').style.display='none';toast('Limpiado — subí otro archivo');}
+function limpiar(){FILES=[];OUTROWS=null;$('file').value='';renderFileList();$('res').innerHTML='';$('warn').innerHTML='';$('dlbtns').innerHTML='';$('prev-card').style.display='none';$('com-card').style.display='none';$('geo-card').style.display='none';toast('Limpiado — subí otro archivo');}
 function quitarArchivo(i){FILES.splice(i,1);renderFileList();if(FILES.length)render();else limpiar();}
 function renderFileList(){
   $('filelist').innerHTML=FILES.length?FILES.map((f,i)=>`<div class="flist-item"><span>📄 ${f.name} · <b>${f.data.length-1}</b> filas</span><button title="Quitar" onclick="quitarArchivo(${i})">✕</button></div>`).join(''):'<div class="hint" style="margin-top:0">Sin archivos cargados.</div>';
@@ -241,6 +317,7 @@ function render(){
   const HEAD=FORMATO==='troncal'?OUT_TR:OUT;
   const out=[HEAD.slice()];OUTBOD=[];let n=0;
   const unknownMap={},faltSet=new Set();let stsTot=0,stsSkip=0,miniN=0,bigN=0,volBefore=0,volAfter=0;
+  let geoCon=0;const geoPendMap={},geoFailsSeen={},geoFails=[],confCounts={exacta:0,aproximada:0,centroide:0};
 
   FILES.forEach(file=>{
     const d=file.data;
@@ -291,8 +368,11 @@ function render(){
       const pesoOut=r3(num(g(r,iPeso)));
       const dirRaw=String(g(r,iDir)).trim(),comStr=String(g(r,iCom)).trim();
       const dir=(comStr&&!normC(dirRaw).includes(normC(comStr)))?[dirRaw,comStr].filter(Boolean).join(', '):dirRaw;
-      const lat=cli==='canon'?'':(num(g(r,iLat))??'');
-      const lon=cli==='canon'?'':(num(g(r,iLon))??'');
+      let lat=cli==='canon'?'':(num(g(r,iLat))??'');
+      let lon=cli==='canon'?'':(num(g(r,iLon))??'');
+      const gkey=normC(dir);
+      if(lat===''||lon===''){const gc=GEOCACHE[gkey];if(gc&&gc.lat!=null&&gc.conf!=='nulo'){lat=gc.lat;lon=gc.lon;if(confCounts[gc.conf]!=null)confCounts[gc.conf]++;}}
+      if(lat===''||lon===''){if(!geoPendMap[gkey])geoPendMap[gkey]={norm:gkey,dir:dir};const gc=GEOCACHE[gkey];if(gc&&gc.conf==='nulo'&&!geoFailsSeen[gkey]){geoFailsSeen[gkey]=1;geoFails.push({dir:dir,motivo:gc.motivo||'no encontrada'});}}else{geoCon++;}
       const ident=cli==='canon'?g(r,iIdCli):n;
       const doc=g(r,iOrden)===''?'':String(g(r,iOrden));
       const cod=g(r,iCod)===''?'':String(g(r,iCod));
@@ -318,6 +398,10 @@ function render(){
 
   // Comunas sin bodega → asignación manual
   renderComunas(Object.values(unknownMap));
+
+  // Georreferenciador: pendientes (sin coord) + resumen
+  GEO_PEND=Object.values(geoPendMap);
+  renderGeo(geoCon,GEO_PEND,confCounts,geoFails);
 
   // Lectura del ajuste Canon (solo UM)
   if($('ca-read'))$('ca-read').innerHTML=(cli==='canon'&&FORMATO==='um')?`Mini ticket: <b>${miniN}</b> ${CANON_ADJ?'(×'+CANON_FACTOR+')':'(ajuste OFF)'} · Big ticket: <b>${bigN}</b> (intactos) · Vol/u total: <b>${r3(volBefore)}</b> → <b>${r3(volAfter)}</b> m³`:'';
