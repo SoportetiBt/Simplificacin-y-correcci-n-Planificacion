@@ -103,19 +103,6 @@
     <div class="hint">Lo que asignes queda guardado en este navegador y se aplica automáticamente a los próximos archivos. Así vamos completando la base de comunas.</div>
   </div>
 
-  <div class="card" id="geo-card" style="display:none">
-    <label>📍 Georreferenciador — rellenar lat/lon que falten</label>
-    <div id="geo-info" class="res"></div>
-    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn b2" id="geo-btn" onclick="geocodizar()">📍 Georreferenciar</button>
-      <button class="btn" style="background:#c0392b;color:#fff" onclick="geoCancel=true">Detener</button>
-      <button class="btn b1" onclick="if(confirm('¿Vaciar el caché de direcciones ya resueltas?')){GEOCACHE={};saveGeocache();render();}">Vaciar caché</button>
-    </div>
-    <div id="geo-prog" class="hint"></div>
-    <div id="geo-fails" style="margin-top:8px"></div>
-    <div class="hint">Busca en OpenStreetMap (gratis) desde tu navegador, ~1 dirección por segundo. Las ya resueltas quedan en caché para no repetir. La coordenada rellena la salida; confianza: <b>exacta</b> / <b>aproximada</b> / <b>centroide de comuna</b>.</div>
-  </div>
-
   <div class="card" id="prev-card" style="display:none">
     <label>Vista previa (primeras filas)</label>
     <div id="prev"></div>
